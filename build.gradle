@@ -1,0 +1,46 @@
+plugins {
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'io.aeron:aeron-all:1.44.1'
+    implementation 'org.agrona:agrona:1.20.0'
+    implementation 'org.java-websocket:Java-WebSocket:1.5.3'
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
+
+tasks.register('runPublisher', JavaExec) {
+    group = 'application'
+    description = 'Runs the SimplePublisher'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.logreplay.simple.SimplePublisher'
+    standardInput = System.in
+    jvmArgs '--add-opens', 'java.base/sun.nio.ch=ALL-UNNAMED'
+}
+
+tasks.register('runSubscriber', JavaExec) {
+    group = 'application'
+    description = 'Runs the SimpleSubscriber'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.logreplay.simple.SimpleSubscriber'
+    standardInput = System.in
+    jvmArgs '--add-opens', 'java.base/sun.nio.ch=ALL-UNNAMED'
+}
+
+tasks.register('runMatchingService', JavaExec) {
+    group = 'application'
+    description = 'Runs the Matching Service'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.logreplay.matching.MatchingService'
+}
+
+tasks.register('runGateway', JavaExec) {
+    group = 'application'
+    description = 'Runs the UI REST Gateway'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.logreplay.gateway.UIRestGateway'
+}
