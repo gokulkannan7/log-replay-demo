@@ -1,9 +1,9 @@
 package com.logreplay.matching;
 
-import com.logreplay.caching.LogCacheStrategy;
-import com.logreplay.caching.MMFLogCache;
-import com.logreplay.source.SolaceReceiver;
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.util.*;
 import java.util.function.Consumer;
 
@@ -12,74 +12,93 @@ public class MatchingService {
     private static final String LOG_PREFIX_REGEX = ".*parse: ";
     private static final String SOH = "^A";
 
-    // -- Inner Class for Result --
     public static class ComparisonResult {
-        public String streamName; // OMS or ONC
         public String orderId;
         public String status;
         public Map<String, String[]> tagMismatches = new HashMap<>();
 
-        public ComparisonResult(String streamName, String orderId) {
-            this.streamName = streamName;
+        public ComparisonResult(String orderId) {
             this.orderId = orderId;
         }
     }
 
-    // -- Main Entry Point --
-    public static void startEngine(Consumer<ComparisonResult> resultEmitter) {
-        System.out.println(">>> STARTING LOG REPLAY VERIFICATION ENGINE <<<");
+    /**
+     * Streams comparison results one by one to the consumer.
+     */
+    public static void streamComparison(String origPath, String replayPath, Consumer<ComparisonResult> observer) {
+        // Phase 1: Index the ORIGINAL file only (Map ID -> ByteOffset)
+        Map<String, Long> originalIndex = indexLogFile(origPath);
 
-        // 1. Initialize Caches for ORIGINAL logs (The Truth)
-        // We use the Memory-Mapped File Strategy (Best for Large Logs)
-        LogCacheStrategy cacheOMS = new MMFLogCache();
-        LogCacheStrategy cacheONC = new MMFLogCache();
-
-        // In a real scenario, correct paths would be passed here
-        cacheOMS.indexFile("logs/OneOmsFixSrcOriginal.log");
-        cacheONC.indexFile("logs/OneOncFixSrcOriginal.log");
-
-        // 2. Start Solace Consumers (The Replay Stream)
-        // We define a callback that executes logic whenever a message arrives
-        startSolaceListener("OMS", "topic_oms", cacheOMS, resultEmitter);
-        startSolaceListener("ONC", "topic_onc", cacheONC, resultEmitter);
+        // Phase 2: Stream replayed file and compare on-the-fly
+        compareWithIndex(origPath, replayPath, originalIndex, observer);
     }
 
-    private static void startSolaceListener(String streamName, String topicKey, LogCacheStrategy cache,
-            Consumer<ComparisonResult> emitter) {
-        new SolaceReceiver("solace.properties", topicKey, (replayMsg) -> {
-            try {
-                processMessage(streamName, replayMsg, cache, emitter);
-            } catch (Exception e) {
-                e.printStackTrace();
+    private static Map<String, Long> indexLogFile(String path) {
+        Map<String, Long> index = new HashMap<>();
+        try (RandomAccessFile raf = new RandomAccessFile(path, "r")) {
+            String line;
+            long offset = 0;
+            while ((line = raf.readLine()) != null) {
+                long currentLineStart = offset;
+                long nextOffset = raf.getFilePointer();
+
+                String id = extractIdFromLine(line);
+                if (id != null) {
+                    index.put(id, currentLineStart);
+                }
+
+                offset = nextOffset;
             }
-        });
-    }
-
-    private static void processMessage(String streamName, String replayLine, LogCacheStrategy cache,
-            Consumer<ComparisonResult> emitter) {
-        String id = extractIdFromLine(replayLine);
-        if (id == null)
-            return; // Skip non-fix lines
-
-        ComparisonResult result = new ComparisonResult(streamName, id);
-
-        // A. Fetch Original from Cache
-        String originalLine = cache.getMessage(id);
-
-        if (originalLine == null) {
-            result.status = "MISSING_IN_ORIGINAL";
-            emitter.accept(result);
-            return;
+        } catch (IOException e) {
+            e.printStackTrace();
         }
-
-        // B. Compare
-        compareLines(originalLine, replayLine, result);
-
-        // C. Emit Result (Only Mismatches or Valid matches if desired)
-        emitter.accept(result);
+        return index;
     }
 
-    // -- Comparison Logic (Same as before, just adapted) --
+    private static void compareWithIndex(String origPath, String replayPath, Map<String, Long> origIndex,
+            Consumer<ComparisonResult> observer) {
+        Set<String> processedIds = new HashSet<>();
+
+        try (BufferedReader replayReader = new BufferedReader(new FileReader(replayPath));
+                RandomAccessFile origRaf = new RandomAccessFile(origPath, "r")) {
+
+            String line;
+            while ((line = replayReader.readLine()) != null) {
+                String id = extractIdFromLine(line);
+                if (id == null)
+                    continue;
+
+                processedIds.add(id);
+                ComparisonResult result = new ComparisonResult(id);
+
+                if (!origIndex.containsKey(id)) {
+                    result.status = "MISSING_IN_ORIGINAL";
+                    observer.accept(result);
+                    continue;
+                }
+
+                long offset = origIndex.get(id);
+                origRaf.seek(offset);
+                String origLine = origRaf.readLine();
+
+                compareLines(origLine, line, result);
+                observer.accept(result);
+            }
+
+            // Items missing in replay
+            for (String origId : origIndex.keySet()) {
+                if (!processedIds.contains(origId)) {
+                    ComparisonResult res = new ComparisonResult(origId);
+                    res.status = "MISSING_IN_REPLAY";
+                    observer.accept(res);
+                }
+            }
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     private static void compareLines(String origLine, String replayLine, ComparisonResult result) {
         Map<String, String> origMap = parseFix(extractFixMessage(origLine));
         Map<String, String> replayMap = parseFix(extractFixMessage(replayLine));
@@ -110,7 +129,7 @@ public class MatchingService {
         if (fixMsg == null)
             return null;
         Map<String, String> tags = parseFix(fixMsg);
-        return tags.getOrDefault("37", tags.getOrDefault("11", null));
+        return tags.getOrDefault("37", tags.get("11"));
     }
 
     private static String extractFixMessage(String line) {
@@ -129,7 +148,7 @@ public class MatchingService {
         if (fixMsg == null)
             return tags;
 
-        String[] fields = fixMsg.split(SOH.replace("^", "\\^")); // Regex safe split
+        String[] fields = fixMsg.split("\\Q" + SOH + "\\E");
         for (String field : fields) {
             String[] kv = field.split("=");
             if (kv.length == 2) {

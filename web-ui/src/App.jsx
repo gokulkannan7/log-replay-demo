@@ -7,7 +7,7 @@ function App() {
 
   // No socket cleanup on unmount for this simple demo to keep connection alive if possible
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8080');
+    const ws = new WebSocket('ws://localhost:8888');
     setStatus('CONNECTING...');
 
     ws.onopen = () => {

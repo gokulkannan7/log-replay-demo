@@ -2,4 +2,3 @@ build/
 .gradle/
 web-ui/node_modules/
 web-ui/dist/
-*.log
