@@ -7,68 +7,59 @@ import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 
 import java.net.InetSocketAddress;
-import java.io.IOException;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 public class UIRestGateway extends WebSocketServer {
 
     private final Gson gson = new Gson();
+    private final Set<WebSocket> clients = Collections.synchronizedSet(new HashSet<>());
 
     public UIRestGateway(InetSocketAddress address) {
         super(address);
     }
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) {
         int port = 8080;
         UIRestGateway server = new UIRestGateway(new InetSocketAddress(port));
         server.start();
         System.out.println("WebSocket Gateway Server started on port: " + port);
 
-        // In a real app, we might trigger this on connection or on a specific "START"
-        // command.
-        // For this demo, we wait for a client to connect, then run the matching
-        // service.
+        // Start the Verification Engine immediately.
+        // It will listen to Solace and push checks to any connected clients.
+        MatchingService.startEngine(result -> {
+            server.broadcastResult(result);
+        });
+    }
+
+    public void broadcastResult(MatchingService.ComparisonResult result) {
+        String json = gson.toJson(result);
+        synchronized (clients) {
+            for (WebSocket client : clients) {
+                if (client.isOpen()) {
+                    client.send(json);
+                }
+            }
+        }
     }
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
-        System.out.println("New connection from " + conn.getRemoteSocketAddress());
-
-        // When a specific client connects, we start streaming the log replay to them.
-        // We run this in a separate thread so we don't block the WebSocket selector
-        // thread.
-        new Thread(() -> {
-            try {
-                System.out.println("Starting Log Replay Stream for client...");
-                MatchingService.streamComparison("logs/original.log", "logs/replayed.log", result -> {
-                    // Convert result to JSON and send
-                    String json = gson.toJson(result);
-                    conn.send(json);
-
-                    // Simulate some processing delay so the UI looks cool streaming in
-                    try {
-                        Thread.sleep(50);
-                    } catch (InterruptedException e) {
-                    }
-                });
-
-                // Send a completion message
-                conn.send("{\"status\": \"COMPLETE\"}");
-                System.out.println("Stream complete.");
-            } catch (Exception e) {
-                e.printStackTrace();
-                conn.close();
-            }
-        }).start();
+        System.out.println("New Dashboard Connected: " + conn.getRemoteSocketAddress());
+        clients.add(conn);
+        // We could send a "Welcome" or "Status" packet here
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        System.out.println("Closed connection: " + conn.getRemoteSocketAddress());
+        System.out.println("Dashboard Disconnected: " + conn.getRemoteSocketAddress());
+        clients.remove(conn);
     }
 
     @Override
     public void onMessage(WebSocket conn, String message) {
-        System.out.println("Received message: " + message);
+        System.out.println("Cmd received: " + message);
     }
 
     @Override
@@ -78,6 +69,6 @@ public class UIRestGateway extends WebSocketServer {
 
     @Override
     public void onStart() {
-        System.out.println("Server started successfully");
+        System.out.println("Server socket bound.");
     }
 }
