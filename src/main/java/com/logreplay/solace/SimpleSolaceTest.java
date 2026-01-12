@@ -1,137 +1,193 @@
 package com.logreplay.solace;
 
 import com.solacesystems.jcsmp.*;
-
 import java.io.FileInputStream;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 
 /**
- * Simple Solace Connection Test
- * 
- * This class ONLY:
- * 1. Connects to your Solace VPN
- * 2. Subscribes to the topic
- * 3. Prints every message it receives
- * 
- * No matching, no caching, no UI - just raw message printing.
+ * Clean Solace Consumer Test
+ * Connects to Solace and prints all received messages
  */
 public class SimpleSolaceTest {
 
     public static void main(String[] args) {
-        System.out.println("=== Solace Connection Test ===\n");
+        System.out.println("╔════════════════════════════════════════╗");
+        System.out.println("║   Solace Consumer Connection Test     ║");
+        System.out.println("╚════════════════════════════════════════╝\n");
 
         JCSMPSession session = null;
+        XMLMessageConsumer consumer = null;
 
         try {
-            // Load configuration
+            // ========================================
+            // STEP 1: Load Configuration
+            // ========================================
             Properties config = new Properties();
             config.load(new FileInputStream("solace.properties"));
 
-            System.out.println("Configuration loaded:");
-            System.out.println("  Host: " + config.getProperty("host"));
-            System.out.println("  VPN: " + config.getProperty("vpnName"));
-            System.out.println("  Topic (OMS): " + config.getProperty("topic_oms"));
+            String host = config.getProperty("host");
+            String vpn = config.getProperty("vpnName");
+            String username = config.getProperty("username");
+            String password = config.getProperty("password");
+            String topicName = config.getProperty("topic_oms");
+
+            System.out.println("📋 Configuration:");
+            System.out.println("   Host: " + host);
+            System.out.println("   VPN: " + vpn);
+            System.out.println("   Username: " + username);
+            System.out.println("   Topic: " + topicName);
             System.out.println();
 
-            // Create session properties
+            // ========================================
+            // STEP 2: Create Session Properties
+            // ========================================
             JCSMPProperties sessionProps = new JCSMPProperties();
-            sessionProps.setProperty(JCSMPProperties.HOST, config.getProperty("host"));
-            sessionProps.setProperty(JCSMPProperties.VPN_NAME, config.getProperty("vpnName"));
-            sessionProps.setProperty(JCSMPProperties.USERNAME, config.getProperty("username"));
-            sessionProps.setProperty(JCSMPProperties.PASSWORD, config.getProperty("password"));
+            sessionProps.setProperty(JCSMPProperties.HOST, host);
+            sessionProps.setProperty(JCSMPProperties.VPN_NAME, vpn);
+            sessionProps.setProperty(JCSMPProperties.USERNAME, username);
+            sessionProps.setProperty(JCSMPProperties.PASSWORD, password);
 
-            // SSL Configuration
+            // SSL Settings
             sessionProps.setBooleanProperty(JCSMPProperties.SSL_VALIDATE_CERTIFICATE, false);
+            sessionProps.setBooleanProperty(JCSMPProperties.SSL_VALIDATE_CERTIFICATE_DATE, false);
 
-            // Connection settings
+            // Connection Settings
             sessionProps.setProperty(JCSMPProperties.REAPPLY_SUBSCRIPTIONS, true);
+            sessionProps.setProperty(JCSMPProperties.GENERATE_SEQUENCE_NUMBERS, false);
 
-            System.out.println("Connecting to Solace...");
-
-            // Create and connect session
+            // ========================================
+            // STEP 3: Connect to Solace
+            // ========================================
+            System.out.println("🔌 Connecting to Solace broker...");
             session = JCSMPFactory.onlyInstance().createSession(sessionProps);
             session.connect();
+            System.out.println("✅ Connected successfully!\n");
 
-            System.out.println("✓ Connected successfully!\n");
+            // ========================================
+            // STEP 4: Create Message Listener
+            // ========================================
+            final CountDownLatch messageReceivedLatch = new CountDownLatch(1);
 
-            // Create message consumer with simple print listener
-            final JCSMPSession finalSession = session;
-            XMLMessageConsumer consumer = session.getMessageConsumer(new XMLMessageListener() {
+            XMLMessageListener messageListener = new XMLMessageListener() {
+                private int messageCount = 0;
+
                 @Override
                 public void onReceive(BytesXMLMessage msg) {
-                    System.out.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-                    System.out.println("MESSAGE RECEIVED:");
-                    System.out.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    messageCount++;
+                    messageReceivedLatch.countDown(); // Signal that we received at least one message
 
-                    // Print message type
-                    if (msg instanceof TextMessage) {
-                        TextMessage textMsg = (TextMessage) msg;
-                        System.out.println("Type: TextMessage");
-                        System.out.println("Content:\n" + textMsg.getText());
-                    } else if (msg instanceof BytesMessage) {
-                        BytesMessage bytesMsg = (BytesMessage) msg;
-                        byte[] data = bytesMsg.getData();
-                        System.out.println("Type: BytesMessage");
-                        System.out.println("Content:\n" + (data != null ? new String(data) : "null"));
-                    } else {
-                        System.out.println("Type: " + msg.getClass().getSimpleName());
-                        System.out.println("Content: " + msg.dump());
+                    System.out.println("\n" + "=".repeat(80));
+                    System.out.println("📨 MESSAGE #" + messageCount + " RECEIVED");
+                    System.out.println("=".repeat(80));
+
+                    try {
+                        // Extract message content
+                        String content = extractMessageContent(msg);
+
+                        // Print message details
+                        System.out.println("Destination: " + msg.getDestination());
+                        System.out.println("Message ID: " + msg.getApplicationMessageId());
+                        System.out.println("Timestamp: " + msg.getSenderTimestamp());
+                        System.out.println("Delivery Mode: " + msg.getDeliveryMode());
+                        System.out.println("\nContent:");
+                        System.out.println(content);
+                        System.out.println("=".repeat(80) + "\n");
+
+                        // Acknowledge the message
+                        msg.ackMessage();
+
+                    } catch (Exception e) {
+                        System.err.println("❌ Error processing message: " + e.getMessage());
+                        e.printStackTrace();
                     }
-
-                    // Print metadata
-                    System.out.println("\nMetadata:");
-                    System.out.println("  Destination: " + msg.getDestination());
-                    System.out.println("  Timestamp: " + msg.getSenderTimestamp());
-                    System.out.println("  Message ID: " + msg.getApplicationMessageId());
-
-                    System.out.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-
-                    // Acknowledge the message
-                    msg.ackMessage();
                 }
 
                 @Override
                 public void onException(JCSMPException e) {
-                    System.err.println("❌ Consumer exception: " + e.getMessage());
+                    System.err.println("❌ Consumer Exception: " + e.getMessage());
                     e.printStackTrace();
                 }
-            });
+            };
 
-            // Subscribe to the OMS topic
-            String topicName = config.getProperty("topic_oms");
-            Topic topic = JCSMPFactory.onlyInstance().createTopic(topicName);
+            // ========================================
+            // STEP 5: Create Consumer
+            // ========================================
+            System.out.println("🎧 Creating message consumer...");
 
-            System.out.println("Subscribing to topic: " + topicName);
-            session.addSubscription(topic);
+            ConsumerFlowProperties flowProps = new ConsumerFlowProperties();
+            flowProps.setEndpoint(null); // Use direct messaging (topic-based)
+            flowProps.setAckMode(JCSMPProperties.SUPPORTED_MESSAGE_ACK_CLIENT);
 
-            // Start consuming
+            consumer = session.getMessageConsumer(messageListener, flowProps);
             consumer.start();
 
-            System.out.println("✓ Subscription active!");
-            System.out.println("\n🎧 Listening for messages... (Press Ctrl+C to stop)\n");
+            System.out.println("✅ Consumer started\n");
 
-            // Keep the program running
-            CountDownLatch latch = new CountDownLatch(1);
+            // ========================================
+            // STEP 6: Subscribe to Topic
+            // ========================================
+            System.out.println("📡 Subscribing to topic: " + topicName);
+            Topic topic = JCSMPFactory.onlyInstance().createTopic(topicName);
+            session.addSubscription(topic);
 
-            // Shutdown hook for graceful cleanup
+            System.out.println("✅ Subscription active!\n");
+            System.out.println("╔════════════════════════════════════════╗");
+            System.out.println("║  Listening for messages...             ║");
+            System.out.println("║  Press Ctrl+C to stop                  ║");
+            System.out.println("╚════════════════════════════════════════╝\n");
+
+            // ========================================
+            // STEP 7: Keep Running
+            // ========================================
+            final CountDownLatch shutdownLatch = new CountDownLatch(1);
+            final JCSMPSession finalSession = session;
+            final XMLMessageConsumer finalConsumer = consumer;
+
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                System.out.println("\n\nShutting down...");
-                latch.countDown();
+                System.out.println("\n\n🛑 Shutdown signal received...");
+                shutdownLatch.countDown();
             }));
 
-            // Wait indefinitely
-            latch.await();
+            // Wait for shutdown
+            shutdownLatch.await();
 
         } catch (Exception e) {
-            System.err.println("\n❌ Error: " + e.getMessage());
+            System.err.println("\n❌ ERROR: " + e.getMessage());
             e.printStackTrace();
+
         } finally {
-            // Cleanup
+            // ========================================
+            // CLEANUP
+            // ========================================
+            System.out.println("\n🧹 Cleaning up resources...");
+
+            if (consumer != null) {
+                consumer.stop();
+                consumer.close();
+                System.out.println("   ✓ Consumer closed");
+            }
+
             if (session != null) {
                 session.closeSession();
-                System.out.println("Session closed.");
+                System.out.println("   ✓ Session closed");
             }
+
+            System.out.println("\n👋 Goodbye!\n");
+        }
+    }
+
+    /**
+     * Extract message content from different message types
+     */
+    private static String extractMessageContent(BytesXMLMessage msg) {
+        if (msg instanceof TextMessage) {
+            return ((TextMessage) msg).getText();
+        } else if (msg instanceof BytesMessage) {
+            byte[] data = ((BytesMessage) msg).getData();
+            return data != null ? new String(data) : "[Empty]";
+        } else {
+            return msg.dump();
         }
     }
 }
