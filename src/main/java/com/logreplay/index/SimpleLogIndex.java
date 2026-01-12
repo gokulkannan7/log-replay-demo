@@ -42,6 +42,9 @@ public class SimpleLogIndex {
                 if (!line.contains("8=FIX"))
                     continue;
 
+                // Normalize: Convert pipe '|' to strict SOH '\u0001' for comparison
+                line = line.replace('|', '\u0001');
+
                 String orderId = extractOrderId(line);
                 if (orderId != null) {
                     messageMap.put(orderId, line);
