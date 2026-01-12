@@ -1,16 +1,26 @@
 package com.logreplay.gateway;
 
-import com.logreplay.matching.MatchingService;
+import com.logreplay.solace.SolaceReplayEngine;
+import com.logreplay.solace.SolaceReplayEngine.ComparisonResult;
 import com.google.gson.Gson;
 import org.java_websocket.server.WebSocketServer;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 
 import java.net.InetSocketAddress;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
+/**
+ * WebSocket Gateway for Real-Time Log Replay Results
+ * Connects Solace replay engine to React dashboard
+ */
 public class UIRestGateway extends WebSocketServer {
 
     private final Gson gson = new Gson();
+    private final Set<WebSocket> clients = Collections.synchronizedSet(new HashSet<>());
+    private SolaceReplayEngine engine;
 
     public UIRestGateway(InetSocketAddress address) {
         super(address);
@@ -19,37 +29,74 @@ public class UIRestGateway extends WebSocketServer {
     public static void main(String[] args) {
         int port = 8888;
         UIRestGateway server = new UIRestGateway(new InetSocketAddress(port));
-        server.start();
-        System.out.println("WebSocket Gateway Server started on port: " + port);
+
+        try {
+            // Start WebSocket server
+            server.start();
+            System.out.println("[Gateway] WebSocket server started on port: " + port);
+
+            // Initialize replay engine (Single Log Config)
+            System.out.println("[Gateway] Initializing replay engine...\n");
+
+            server.engine = new SolaceReplayEngine(
+                    "logs/OneOmsFixSrcOriginal.log", // Just one log file
+                    result -> server.broadcastResult(result));
+
+            // Start consuming from Solace
+            server.engine.start("solace.properties");
+
+            System.out.println("[Gateway] Engine started - streaming results to UI\n");
+
+            // Shutdown hook
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                System.out.println("\n[Gateway] Shutdown initiated...");
+                if (server.engine != null) {
+                    server.engine.shutdown();
+                }
+                try {
+                    server.stop(1000);
+                } catch (InterruptedException e) {
+                    // Ignore
+                }
+            }));
+
+        } catch (Exception e) {
+            System.err.println("[Gateway] ERROR: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    private void broadcastResult(ComparisonResult result) {
+        String json = gson.toJson(result);
+        synchronized (clients) {
+            for (WebSocket client : clients) {
+                if (client.isOpen()) {
+                    client.send(json);
+                }
+            }
+        }
     }
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
-        System.out.println("New connection from " + conn.getRemoteSocketAddress());
+        clients.add(conn);
+        System.out.println("[Gateway] Client connected: " + conn.getRemoteSocketAddress());
 
-        new Thread(() -> {
-            try {
-                System.out.println("Starting Log Replay Stream...");
-                MatchingService.streamComparison("logs/original.log", "logs/replayed.log", result -> {
-                    String json = gson.toJson(result);
-                    conn.send(json);
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException e) {
-                    }
-                });
-
-                conn.send("{\"status\": \"COMPLETE\"}");
-                System.out.println("Stream complete.");
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }).start();
+        if (engine != null) {
+            String stats = String.format(
+                    "{\"type\":\"stats\",\"processed\":%d,\"mismatches\":%d,\"remaining\":%d}",
+                    engine.getProcessedCount(),
+                    engine.getMismatchCount(),
+                    engine.getRemaining());
+            conn.send(stats);
+        }
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        System.out.println("Closed connection: " + conn.getRemoteSocketAddress());
+        clients.remove(conn);
+        System.out.println("[Gateway] Client disconnected: " + conn.getRemoteSocketAddress());
     }
 
     @Override
@@ -58,11 +105,11 @@ public class UIRestGateway extends WebSocketServer {
 
     @Override
     public void onError(WebSocket conn, Exception ex) {
-        ex.printStackTrace();
+        System.err.println("[Gateway] WebSocket error: " + ex.getMessage());
     }
 
     @Override
     public void onStart() {
-        System.out.println("Server started successfully");
+        System.out.println("[Gateway] WebSocket server ready");
     }
 }
