@@ -1,7 +1,12 @@
 package com.logreplay.compare;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Zero-Allocation FIX Message Comparator
@@ -45,33 +50,55 @@ public class FIXComparator {
         allTags.addAll(origTags.keySet());
         allTags.addAll(replayTags.keySet());
 
-        // 2. Iterate and Compare
-        for (String tag : allTags) {
+        // 2. Iterate and Compare (Structured Table)
+        System.out.println("----------------------------------------------------------------------------------");
+        System.out.println(String.format("| %-5s | %-25s | %-25s | %-12s |", "TAG", "ORIGINAL", "REPLAY", "STATUS"));
+        System.out.println("----------------------------------------------------------------------------------");
+
+        // Sort tags numerically/alphabetically for cleaner reading
+        List<String> sortedTags = new ArrayList<>(allTags);
+        Collections.sort(sortedTags, (a, b) -> {
+            try {
+                return Integer.compare(Integer.parseInt(a), Integer.parseInt(b));
+            } catch (NumberFormatException e) {
+                return a.compareTo(b);
+            }
+        });
+
+        for (String tag : sortedTags) {
             String origVal = origTags.get(tag);
             String replayVal = replayTags.get(tag);
+            String status;
+
+            // Truncate long values for table display
+            String displayOrig = (origVal == null) ? "MISSING"
+                    : (origVal.length() > 25 ? origVal.substring(0, 22) + "..." : origVal);
+            String displayReplay = (replayVal == null) ? "MISSING"
+                    : (replayVal.length() > 25 ? replayVal.substring(0, 22) + "..." : replayVal);
 
             if (origVal == null) {
-                // System.out.println("TAG " + tag + ": LOG=[MISSING] vs REPLAY=[" + replayVal +
-                // "] -> EXTRA IN REPLAY");
+                status = "EXTRA (R)";
                 if (diffs == null)
                     diffs = new HashMap<>();
                 diffs.put(tag, new String[] { "MISSING", replayVal });
             } else if (replayVal == null) {
-                // System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs
-                // REPLAY=[MISSING] -> MISSING IN REPLAY");
+                status = "MISSING (R)";
                 if (diffs == null)
                     diffs = new HashMap<>();
                 diffs.put(tag, new String[] { origVal, "MISSING" });
-            } else if (!origVal.equals(replayVal)) {
-                System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" + replayVal + "] -> MISMATCH");
+            } else if (origVal.equals(replayVal)) {
+                status = "MATCH";
+            } else {
+                status = "MISMATCH";
                 if (diffs == null)
                     diffs = new HashMap<>();
                 diffs.put(tag, new String[] { origVal, replayVal });
-            } else {
-                // System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" +
-                // replayVal + "] -> MATCH");
             }
+
+            System.out.println(
+                    String.format("| %-5s | %-25s | %-25s | %-12s |", tag, displayOrig, displayReplay, status));
         }
+        System.out.println("----------------------------------------------------------------------------------\n");
 
         return diffs; // null if perfect match
     }
