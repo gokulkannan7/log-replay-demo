@@ -3,7 +3,11 @@ package com.logreplay.index;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.File;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -32,6 +36,9 @@ public class SimpleLogIndex {
 
     private void buildIndex() {
         System.out.println(">> [" + indexName + "] STARTING INDEX BUILD (Stream Mode)...");
+        File logFile = new File(filePath);
+        System.out.println(">> [INDEX INFO] Reading from ABSOLUTE PATH: " + logFile.getAbsolutePath());
+
         long start = System.currentTimeMillis();
         int count = 0;
 
@@ -95,12 +102,54 @@ public class SimpleLogIndex {
             if (orderId.equals("VOD.L")) {
                 System.out.println(">> [INDEX CHECK] FOUND VOD.L at Tag 55 in Msg #" + msgIndex + "! Storing...");
             }
+
+            // VISUALIZATION: Print table of what we are storing
+            printMessageTable(normalizedMsg, orderId, msgIndex);
+
             messageMap.put(orderId, normalizedMsg);
         } else {
             // Optional: Print warning only if strictly needed to avoid noise
             // System.out.println("[INDEX] SKIPPING Msg #" + msgIndex + ": No Tag 55
             // found.");
         }
+    }
+
+    /**
+     * Prints a beautiful table of the message content
+     */
+    private void printMessageTable(String msg, String id, int index) {
+        System.out.println("\n>> [INDEX PARSED Msg #" + index + "] Key: " + id);
+        System.out.println("-------------------------------------------------------------");
+        System.out.println(String.format("| %-6s | %-50s |", "TAG", "VALUE"));
+        System.out.println("-------------------------------------------------------------");
+
+        String[] parts = msg.split("\u0001");
+        List<String[]> rows = new ArrayList<>();
+
+        for (String part : parts) {
+            int eq = part.indexOf('=');
+            if (eq > 0) {
+                rows.add(new String[] { part.substring(0, eq), part.substring(eq + 1) });
+            }
+        }
+
+        // Sort tags nicely
+        Collections.sort(rows, (a, b) -> {
+            try {
+                return Integer.compare(Integer.parseInt(a[0]), Integer.parseInt(b[0]));
+            } catch (Exception e) {
+                return a[0].compareTo(b[0]);
+            }
+        });
+
+        for (String[] row : rows) {
+            // Truncate value if too long to keep table clean
+            String val = row[1];
+            if (val.length() > 50)
+                val = val.substring(0, 47) + "...";
+            System.out.println(String.format("| %-6s | %-50s |", row[0], val));
+        }
+        System.out.println("-------------------------------------------------------------\n");
     }
 
     /**
