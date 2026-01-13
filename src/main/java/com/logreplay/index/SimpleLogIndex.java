@@ -127,9 +127,19 @@ public class SimpleLogIndex {
         List<String[]> rows = new ArrayList<>();
 
         for (String part : parts) {
+            if (part.trim().isEmpty())
+                continue;
             int eq = part.indexOf('=');
             if (eq > 0) {
-                rows.add(new String[] { part.substring(0, eq), part.substring(eq + 1) });
+                String key = part.substring(0, eq);
+                String val = part.substring(eq + 1);
+                // DEBUG: Print weird tags to console immediately
+                if (key.startsWith("-")) {
+                    System.out.println(">> [INDEX DEBUG] Found Negative Tag: " + key + " = " + val);
+                }
+                rows.add(new String[] { key, val });
+            } else {
+                // System.out.println(">> [INDEX DEBUG] Ignored Token (No =): " + part);
             }
         }
 
