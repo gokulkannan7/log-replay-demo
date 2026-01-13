@@ -28,9 +28,10 @@ public class SolaceReplayEngine {
     private final AtomicInteger mismatchCount = new AtomicInteger(0);
 
     public static class ComparisonResult {
+        public String type = "RESULT"; // Discriminator for UI
         public String orderId;
         public String status; // "MATCH", "MISMATCH", "MISSING_IN_ORIGINAL"
-        public Map<String, String[]> tagMismatches;
+        public Map<String, String[]> tagMismatches = new HashMap<>(); // Never null to avoid UI crash
 
         public ComparisonResult(String orderId) {
             this.orderId = orderId;
@@ -102,15 +103,33 @@ public class SolaceReplayEngine {
                     ? ((TextMessage) msg).getText()
                     : new String(((BytesMessage) msg).getData());
 
+            // DEBUG: Print reception
+            System.out.println(">> [DEBUG] Received Solace Msg: " + replayMsg);
+
+            // DEBUG: INSPECT DELIMETERS
+            System.out.print(">> [DEBUG] Delimeter Codes: ");
+            for (char c : replayMsg.toCharArray()) {
+                if (c < 32 || c == 124 || c == 94) { // Check for control chars, pipe |, or carat ^
+                    System.out.print((int) c + " ");
+                }
+            }
+            System.out.println(); // Newline
+
             // 2. Get ID
             String orderId = FIXComparator.extractOrderId(replayMsg);
-            if (orderId == null)
+            System.out.println(">> [DEBUG] Extracted ID: " + orderId);
+
+            if (orderId == null) {
+                System.out.println(">> [DEBUG] SKIPPING: Could not find Tag 55");
                 return;
+            }
 
             ComparisonResult result = new ComparisonResult(orderId);
 
             // 3. Lookup in HashMap
             String originalMsg = simpleIndex.getMessage(orderId);
+            System.out.println(
+                    ">> [DEBUG] Lookup Index for '" + orderId + "': " + (originalMsg != null ? "FOUND" : "NOT FOUND"));
 
             if (originalMsg == null) {
                 result.status = "MISSING_IN_ORIGINAL";

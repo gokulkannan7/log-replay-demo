@@ -25,6 +25,12 @@ public class FIXComparator {
      * Returns null if match, or Map<Tag, [Original, Replay]> if mismatch
      */
     public Map<String, String[]> compare(String original, String replay) {
+        // VISUAL DEBUG: Print full messages with Pipe delimiters
+        System.out.println("\n============ COMPARISON START ============");
+        System.out.println(">> ORIG:   " + original.replace('\u0001', '|'));
+        System.out.println(">> REPLAY: " + replay.replace('\u0001', '|'));
+        System.out.println("------------------------------------------");
+
         // Parse both messages
         Map<String, String> origTags = parseToMap(original);
         Map<String, String> replayTags = parseToMap(replay);
@@ -43,19 +49,26 @@ public class FIXComparator {
             String replayVal = replayTags.get(tag);
 
             if (origVal == null) {
-                System.out.println("TAG " + tag + ": LOG=[MISSING] vs REPLAY=[" + replayVal + "] -> EXTRA IN REPLAY");
+                // System.out.println("TAG " + tag + ": LOG=[MISSING] vs REPLAY=[" + replayVal +
+                // "] -> EXTRA IN REPLAY");
+                if (diffs == null)
+                    diffs = new HashMap<>();
+                diffs.put(tag, new String[] { "MISSING", replayVal });
             } else if (replayVal == null) {
-                System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[MISSING] -> MISSING IN REPLAY");
+                // System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs
+                // REPLAY=[MISSING] -> MISSING IN REPLAY");
                 if (diffs == null)
                     diffs = new HashMap<>();
                 diffs.put(tag, new String[] { origVal, "MISSING" });
-            } else if (origVal.equals(replayVal)) {
-                System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" + replayVal + "] -> MATCH");
-            } else {
-                System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" + replayVal + "] -> MISMATCH");
+            } else if (!origVal.equals(replayVal)) {
+                // System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" +
+                // replayVal + "] -> MISMATCH");
                 if (diffs == null)
                     diffs = new HashMap<>();
                 diffs.put(tag, new String[] { origVal, replayVal });
+            } else {
+                // System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" +
+                // replayVal + "] -> MATCH");
             }
         }
 

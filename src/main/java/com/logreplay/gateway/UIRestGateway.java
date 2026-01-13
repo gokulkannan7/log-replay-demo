@@ -24,11 +24,16 @@ public class UIRestGateway extends WebSocketServer {
 
     public UIRestGateway(InetSocketAddress address) {
         super(address);
+        // Disable "lost connection" detection to prevent "did not respond with pong"
+        // errors
+        // during debugging or idle times.
+        this.setConnectionLostTimeout(0);
     }
 
     public static void main(String[] args) {
         int port = 8888;
-        UIRestGateway server = new UIRestGateway(new InetSocketAddress(port));
+        // Bind to 0.0.0.0 (All interfaces) to avoid localhost/127.0.0.1 mismatch issues
+        UIRestGateway server = new UIRestGateway(new InetSocketAddress(8888));
 
         try {
             // Start WebSocket server
@@ -80,23 +85,19 @@ public class UIRestGateway extends WebSocketServer {
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
-        clients.add(conn);
-        System.out.println("[Gateway] Client connected: " + conn.getRemoteSocketAddress());
-
-        if (engine != null) {
-            String stats = String.format(
-                    "{\"type\":\"stats\",\"processed\":%d,\"mismatches\":%d,\"remaining\":%d}",
-                    engine.getProcessedCount(),
-                    engine.getMismatchCount(),
-                    engine.getRemaining());
-            conn.send(stats);
+        synchronized (clients) {
+            clients.add(conn);
         }
+        System.out.println(">> [GATEWAY] Client CONNECTED! (Total: " + clients.size() + ") Remote: "
+                + conn.getRemoteSocketAddress());
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        clients.remove(conn);
-        System.out.println("[Gateway] Client disconnected: " + conn.getRemoteSocketAddress());
+        synchronized (clients) {
+            clients.remove(conn);
+        }
+        System.out.println(">> [GATEWAY] Client DISCONNECTED! Reason: " + reason + " (Total: " + clients.size() + ")");
     }
 
     @Override
@@ -105,7 +106,8 @@ public class UIRestGateway extends WebSocketServer {
 
     @Override
     public void onError(WebSocket conn, Exception ex) {
-        System.err.println("[Gateway] WebSocket error: " + ex.getMessage());
+        System.err.println(">> [GATEWAY] Error: " + ex.getMessage());
+        ex.printStackTrace();
     }
 
     @Override
