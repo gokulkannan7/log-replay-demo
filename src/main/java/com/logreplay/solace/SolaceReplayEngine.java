@@ -98,29 +98,22 @@ public class SolaceReplayEngine {
 
     private void processMessage(BytesXMLMessage msg) {
         try {
-            // 1. Get Text
-            String replayMsg = (msg instanceof TextMessage)
+            // 1. Get Text & Normalize
+            String rawMsg = (msg instanceof TextMessage)
                     ? ((TextMessage) msg).getText()
                     : new String(((BytesMessage) msg).getData());
 
-            // DEBUG: Print reception
-            System.out.println(">> [DEBUG] Received Solace Msg: " + replayMsg);
+            // DEBUG: Raw Solace Msg
+            // System.out.println("[SOLACE] Raw Recv: " + rawMsg);
 
-            // DEBUG: INSPECT DELIMETERS
-            System.out.print(">> [DEBUG] Delimeter Codes: ");
-            for (char c : replayMsg.toCharArray()) {
-                if (c < 32 || c == 124 || c == 94) { // Check for control chars, pipe |, or carat ^
-                    System.out.print((int) c + " ");
-                }
-            }
-            System.out.println(); // Newline
+            // NORMALIZE: Force all delimiters to standard SOH (\u0001)
+            String replayMsg = rawMsg.replace('|', '\u0001').replace("^A", "\u0001");
 
-            // 2. Get ID
+            // 2. Get ID (Tag -88)
             String orderId = FIXComparator.extractOrderId(replayMsg);
-            System.out.println(">> [DEBUG] Extracted ID: " + orderId);
 
             if (orderId == null) {
-                System.out.println(">> [DEBUG] SKIPPING: Could not find Tag 55");
+                System.out.println("[SOLACE] SKIPPING: Could not find Tag -88 in msg of len " + replayMsg.length());
                 return;
             }
 
@@ -128,20 +121,24 @@ public class SolaceReplayEngine {
 
             // 3. Lookup in HashMap
             String originalMsg = simpleIndex.getMessage(orderId);
-            System.out.println(
-                    ">> [DEBUG] Lookup Index for '" + orderId + "': " + (originalMsg != null ? "FOUND" : "NOT FOUND"));
 
             if (originalMsg == null) {
+                System.out.println(
+                        "[SOLACE] ID [" + orderId + "] NOT FOUND in Index. (Msg len: " + replayMsg.length() + ")");
                 result.status = "MISSING_IN_ORIGINAL";
             } else {
+                System.out.println("[SOLACE] ID [" + orderId + "] FOUND. Comparing...");
+
                 // 4. Compare
                 Map<String, String[]> diffs = comparator.compare(originalMsg, replayMsg);
                 if (diffs == null || diffs.isEmpty()) {
                     result.status = "MATCH";
+                    System.out.println(">> RESULT: MATCH for " + orderId);
                 } else {
                     result.status = "MISMATCH";
                     result.tagMismatches = diffs;
                     mismatchCount.incrementAndGet();
+                    System.out.println(">> RESULT: MISMATCH for " + orderId + " (" + diffs.size() + " diffs)");
                 }
                 // Free memory
                 simpleIndex.remove(orderId);

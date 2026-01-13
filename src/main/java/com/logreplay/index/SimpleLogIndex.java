@@ -31,7 +31,7 @@ public class SimpleLogIndex {
     }
 
     private void buildIndex() {
-        System.out.println("[" + indexName + "] Loading log file into memory: " + filePath);
+        System.out.println(">> [" + indexName + "] STARTING INDEX BUILD...");
         long start = System.currentTimeMillis();
         int count = 0;
 
@@ -42,16 +42,27 @@ public class SimpleLogIndex {
                 if (!line.contains("8=FIX"))
                     continue;
 
+                // DEBUG: Raw Line
+                // System.out.println("[INDEX] Raw Line: " + line);
+
                 // 1. Normalize IMMEDIATELY: Convert pipe '|' AND literal '^A' to strict SOH
                 // '\u0001'
-                // This ensures the stored message is valid standard FIX.
-                line = line.replace('|', '\u0001').replace("^A", "\u0001");
+                String normalized = line.replace('|', '\u0001').replace("^A", "\u0001");
+
+                // DEBUG: Normalized
+                // System.out.println("[INDEX] Norm Line: " + normalized.replace('\u0001',
+                // '|'));
 
                 // 2. Extract ID (Tag -88)
-                String orderId = extractOrderId(line);
+                String orderId = extractOrderId(normalized);
+
                 if (orderId != null) {
-                    messageMap.put(orderId, line); // Store the CLEAN, NORMALIZED line
+                    System.out.println("[INDEX] Storing ID: [" + orderId + "]"); // Log every ID extracted
+                    messageMap.put(orderId, normalized);
                     count++;
+                } else {
+                    System.out.println("[INDEX] SKIPPING: No Tag -88 found in line: "
+                            + normalized.substring(0, Math.min(50, normalized.length())) + "...");
                 }
             }
         } catch (IOException e) {
