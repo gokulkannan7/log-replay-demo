@@ -32,29 +32,40 @@ public class FIXComparator {
         Map<String, String[]> diffs = null; // Only create if needed
 
         // Compare each tag in original
-        for (Map.Entry<String, String> entry : origTags.entrySet()) {
-            String tag = entry.getKey();
-            String origValue = entry.getValue();
+        // 1. Get Union of All Tags to compare everything
+        Set<String> allTags = new HashSet<>();
+        allTags.addAll(origTags.keySet());
+        allTags.addAll(replayTags.keySet());
 
-            // Skip ignored tags
-            if (isIgnored(tag)) {
-                continue;
-            }
+        // 2. Iterate and Compare
+        for (String tag : allTags) {
+            String origVal = origTags.get(tag);
+            String replayVal = replayTags.get(tag);
 
-            String replayValue = replayTags.get(tag);
-
-            // Check for mismatch
-            if (replayValue == null || !replayValue.equals(origValue)) {
-                if (diffs == null) {
+            if (origVal == null) {
+                System.out.println("TAG " + tag + ": LOG=[MISSING] vs REPLAY=[" + replayVal + "] -> EXTRA IN REPLAY");
+            } else if (replayVal == null) {
+                System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[MISSING] -> MISSING IN REPLAY");
+                if (diffs == null)
                     diffs = new HashMap<>();
-                }
-                diffs.put(tag, new String[] { origValue, replayValue == null ? "MISSING" : replayValue });
+                diffs.put(tag, new String[] { origVal, "MISSING" });
+            } else if (origVal.equals(replayVal)) {
+                System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" + replayVal + "] -> MATCH");
+            } else {
+                System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" + replayVal + "] -> MISMATCH");
+                if (diffs == null)
+                    diffs = new HashMap<>();
+                diffs.put(tag, new String[] { origVal, replayVal });
             }
         }
 
         return diffs; // null if perfect match
     }
 
+    /**
+     * Fast FIX message parsing - Zero-copy approach
+     * Reuses ThreadLocal map to avoid allocations
+     */
     /**
      * Fast FIX message parsing - Zero-copy approach
      * Reuses ThreadLocal map to avoid allocations
@@ -70,37 +81,17 @@ public class FIXComparator {
         }
 
         String fixMsg = message.substring(fixStart);
-        int len = fixMsg.length();
-        int i = 0;
 
-        while (i < len) {
-            // Find tag start (after ^A or at beginning)
-            if (i > 0 && !(fixMsg.charAt(i - 1) == 'A' && i >= 2 && fixMsg.charAt(i - 2) == '^')) {
-                i++;
-                continue;
+        // Split by standard SOH delimiter (which we normalized earlier)
+        String[] parts = fixMsg.split("\u0001");
+
+        for (String part : parts) {
+            int eqPos = part.indexOf('=');
+            if (eqPos != -1) {
+                String tag = part.substring(0, eqPos);
+                String value = part.substring(eqPos + 1);
+                map.put(tag, value);
             }
-
-            // Find '=' separator
-            int eqPos = fixMsg.indexOf('=', i);
-            if (eqPos == -1)
-                break;
-
-            // Extract tag
-            String tag = fixMsg.substring(i, eqPos);
-
-            // Find value end (next ^A or end of string)
-            int valueStart = eqPos + 1;
-            int valueEnd = fixMsg.indexOf("^A", valueStart);
-            if (valueEnd == -1) {
-                valueEnd = len;
-            }
-
-            // Extract value
-            String value = fixMsg.substring(valueStart, valueEnd);
-
-            map.put(tag, value);
-
-            i = valueEnd + 2; // Skip ^A
         }
 
         return map;
@@ -119,7 +110,7 @@ public class FIXComparator {
     }
 
     /**
-     * Extract OrderID from FIX message (fast path)
+     * Extract Tag 55 (Symbol) from FIX message (Modified for Testing)
      */
     public static String extractOrderId(String message) {
         int fixStart = message.indexOf("8=FIX");
@@ -127,19 +118,17 @@ public class FIXComparator {
             return null;
         }
 
-        // Look for Tag 37 or Tag 11
-        int tag37 = message.indexOf("^A37=", fixStart);
-        if (tag37 != -1) {
-            int start = tag37 + 5;
-            int end = message.indexOf("^A", start);
-            return message.substring(start, end == -1 ? message.length() : end);
-        }
+        // Normalize message delimiters to ensure we find the tag
+        // 1. Convert pipe '|' to strict SOH '\u0001'
+        // 2. Convert literal "^A" to strict SOH '\u0001'
+        String normalized = message.replace('|', '\u0001').replace("^A", "\u0001");
 
-        int tag11 = message.indexOf("^A11=", fixStart);
-        if (tag11 != -1) {
-            int start = tag11 + 5;
-            int end = message.indexOf("^A", start);
-            return message.substring(start, end == -1 ? message.length() : end);
+        // Look for Tag 55 (Symbol)
+        int tag55 = normalized.indexOf("\u000155=", fixStart);
+        if (tag55 != -1) {
+            int start = tag55 + 4; // Skip ^A55=
+            int end = normalized.indexOf("\u0001", start);
+            return normalized.substring(start, end == -1 ? normalized.length() : end);
         }
 
         return null;

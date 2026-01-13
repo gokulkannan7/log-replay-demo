@@ -42,12 +42,15 @@ public class SimpleLogIndex {
                 if (!line.contains("8=FIX"))
                     continue;
 
-                // Normalize: Convert pipe '|' to strict SOH '\u0001' for comparison
-                line = line.replace('|', '\u0001');
+                // 1. Normalize IMMEDIATELY: Convert pipe '|' AND literal '^A' to strict SOH
+                // '\u0001'
+                // This ensures the stored message is valid standard FIX.
+                line = line.replace('|', '\u0001').replace("^A", "\u0001");
 
+                // 2. Extract ID (Tag -88)
                 String orderId = extractOrderId(line);
                 if (orderId != null) {
-                    messageMap.put(orderId, line);
+                    messageMap.put(orderId, line); // Store the CLEAN, NORMALIZED line
                     count++;
                 }
             }
@@ -56,20 +59,18 @@ public class SimpleLogIndex {
         }
 
         long time = System.currentTimeMillis() - start;
-        System.out.println("[" + indexName + "] Loaded " + count + " orders in " + time + "ms");
+        System.out.println(">> [" + indexName + "] INDEX READY. Loaded " + count + " orders in " + time + "ms");
     }
 
     /**
      * Extracts OrderID (Tag 37) or ClOrdID (Tag 11) from a FIX message string.
      */
+    /**
+     * Extracts Tag 55 (Symbol) for testing purposes.
+     */
     private String extractOrderId(String line) {
-        // Look for Tag 37 (OrderID) first
-        String id = getTagValue(line, "37=");
-        if (id != null)
-            return id;
-
-        // Fallback to Tag 11 (ClOrdID)
-        return getTagValue(line, "11=");
+        // Look for Tag 55 (Symbol)
+        return getTagValue(line, "55=");
     }
 
     /**
