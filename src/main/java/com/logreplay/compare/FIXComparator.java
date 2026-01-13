@@ -35,9 +35,11 @@ public class FIXComparator {
         Map<String, String> origTags = parseToMap(original);
         Map<String, String> replayTags = parseToMap(replay);
 
+        System.out.println(
+                ">> [COMPARE] Orig Tags Parsed: " + origTags.size() + " | Replay Tags Parsed: " + replayTags.size());
+
         Map<String, String[]> diffs = null; // Only create if needed
 
-        // Compare each tag in original
         // 1. Get Union of All Tags to compare everything
         Set<String> allTags = new HashSet<>();
         allTags.addAll(origTags.keySet());
@@ -61,8 +63,7 @@ public class FIXComparator {
                     diffs = new HashMap<>();
                 diffs.put(tag, new String[] { origVal, "MISSING" });
             } else if (!origVal.equals(replayVal)) {
-                // System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" +
-                // replayVal + "] -> MISMATCH");
+                System.out.println("TAG " + tag + ": LOG=[" + origVal + "] vs REPLAY=[" + replayVal + "] -> MISMATCH");
                 if (diffs == null)
                     diffs = new HashMap<>();
                 diffs.put(tag, new String[] { origVal, replayVal });
@@ -79,10 +80,6 @@ public class FIXComparator {
      * Fast FIX message parsing - Zero-copy approach
      * Reuses ThreadLocal map to avoid allocations
      */
-    /**
-     * Fast FIX message parsing - Zero-copy approach
-     * Reuses ThreadLocal map to avoid allocations
-     */
     private Map<String, String> parseToMap(String message) {
         Map<String, String> map = tagMapPool.get();
         map.clear(); // Reuse existing map
@@ -90,24 +87,42 @@ public class FIXComparator {
         // Extract FIX portion
         int fixStart = message.indexOf("8=FIX");
         if (fixStart == -1) {
+            System.out.println(">> [PARSER WARNING] No '8=FIX' found in string: "
+                    + message.substring(0, Math.min(20, message.length())));
             return map;
         }
 
-        String fixMsg = message.substring(fixStart);
+        String payload = message.substring(fixStart);
+        int len = payload.length();
+        int start = 0;
 
-        // Split by standard SOH delimiter (which we normalized earlier)
-        String[] parts = fixMsg.split("\u0001");
-
-        for (String part : parts) {
-            int eqPos = part.indexOf('=');
-            if (eqPos != -1) {
-                String tag = part.substring(0, eqPos);
-                String value = part.substring(eqPos + 1);
-                map.put(tag, value);
+        // Manual Tokenizer Loop: Iterates chars to find Delimiters
+        for (int i = 0; i < len; i++) {
+            char c = payload.charAt(i);
+            // Delimiter Check: SOH or Pipe or newline
+            if (c == '\u0001' || c == '|' || c == '\n' || c == '\r') {
+                parseAndPut(payload, start, i, map);
+                start = i + 1;
             }
+        }
+        // Handle last incomplete token
+        if (start < len) {
+            parseAndPut(payload, start, len, map);
         }
 
         return map;
+    }
+
+    private void parseAndPut(String src, int start, int end, Map<String, String> map) {
+        if (start >= end)
+            return; // Empty token
+        String token = src.substring(start, end);
+        int eqPos = token.indexOf('=');
+        if (eqPos > 0) { // Tag must be at least 1 char
+            String tag = token.substring(0, eqPos);
+            String value = token.substring(eqPos + 1);
+            map.put(tag, value);
+        }
     }
 
     /**
