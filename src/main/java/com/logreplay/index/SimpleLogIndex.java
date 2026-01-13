@@ -31,49 +31,76 @@ public class SimpleLogIndex {
     }
 
     private void buildIndex() {
-        System.out.println(">> [" + indexName + "] STARTING INDEX BUILD...");
+        System.out.println(">> [" + indexName + "] STARTING INDEX BUILD (Stream Mode)...");
         long start = System.currentTimeMillis();
         int count = 0;
 
         try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            // 1. Read ENTIRE file into memory to handle any weird line-breaks or
+            // concatenations
+            StringBuilder fileBuffer = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
-                // simple validation
-                if (!line.contains("8=FIX"))
-                    continue;
-
-                // DEBUG: Raw Line
-                // System.out.println("[INDEX] Raw Line: " + line);
-
-                // 1. Normalize: The screenshot shows literal "^A" characters.
-                // We MUST convert these to strict SOH '\u0001'.
-                String normalized = line.replace("^A", "\u0001");
-
-                // DEBUG: Normalized
-                // System.out.println("[INDEX] Norm Line: " + normalized.replace('\u0001',
-                // '|'));
-
-                // 2. Extract Key.
-                // User Request: "VOD.L". Screenshot shows "55=VOD.L".
-                // We will extract Tag 55.
-                String orderId = extractOrderId(normalized); // This will look for 55=
-
-                if (orderId != null) {
-                    if (orderId.equals("VOD.L")) {
-                        System.out.println(">> [INDEX CHECK] FOUND VOD.L at Tag 55! Storing...");
-                    }
-                    messageMap.put(orderId, normalized);
-                    count++;
-                } else {
-                    // System.out.println("[INDEX] SKIPPING: No Key found.");
-                }
+                fileBuffer.append(line).append('\n'); // Preserve line breaks as whitespace
             }
+
+            // 2. Normalize Globally: Handle literal "^A" and Pipe "|"
+            // Converting to Standard SOH usually \u0001
+            String rawData = fileBuffer.toString().replace("^A", "\u0001").replace("|", "\u0001");
+
+            // 3. Scan for "8=FIX" (Start of Message)
+            int cursor = 0;
+            while (true) {
+                int startPos = rawData.indexOf("8=FIX", cursor);
+                if (startPos == -1)
+                    break; // No more messages
+
+                // Find start of NEXT message to determine end of CURRENT message
+                int nextPos = rawData.indexOf("8=FIX", startPos + 1);
+
+                String messageChunk;
+                if (nextPos == -1) {
+                    // Last message
+                    messageChunk = rawData.substring(startPos);
+                    cursor = rawData.length();
+                } else {
+                    messageChunk = rawData.substring(startPos, nextPos);
+                    cursor = nextPos;
+                }
+
+                // 4. Process the Chunk
+                // Clean up any trailing newlines/garbage from the file read
+                String cleanMsg = messageChunk.trim();
+                processLine(cleanMsg, count);
+                count++;
+            }
+
         } catch (IOException e) {
             System.err.println("[" + indexName + "] Failed to load log file: " + e.getMessage());
         }
 
         long time = System.currentTimeMillis() - start;
-        System.out.println(">> [" + indexName + "] INDEX READY. Loaded " + count + " orders in " + time + "ms");
+        System.out.println(">> [" + indexName + "] INDEX READY. Loaded " + messageMap.size() + " unique orders (Parsed "
+                + count + " msgs) in " + time + "ms");
+    }
+
+    private void processLine(String normalizedMsg, int msgIndex) {
+        // 2. Extract Key (Tag 55 = Symbol, Tag 48 = SecID, or Tag 11 = ClOrdID)
+        // User specific request: "VOD.L" found in Tag 55.
+        // We will try multiple keys if needed, but prioritize 55 for now.
+        String orderId = extractOrderId(normalizedMsg);
+
+        if (orderId != null) {
+            // Debug check for the specific user case
+            if (orderId.equals("VOD.L")) {
+                System.out.println(">> [INDEX CHECK] FOUND VOD.L at Tag 55 in Msg #" + msgIndex + "! Storing...");
+            }
+            messageMap.put(orderId, normalizedMsg);
+        } else {
+            // Optional: Print warning only if strictly needed to avoid noise
+            // System.out.println("[INDEX] SKIPPING Msg #" + msgIndex + ": No Tag 55
+            // found.");
+        }
     }
 
     /**
