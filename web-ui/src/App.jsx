@@ -1,144 +1,104 @@
-import { useState, useEffect, useMemo } from 'react'
-import './App.css'
+import React, { useState, useMemo } from 'react';
+import useWebSocket from './hooks/useWebSocket';
+import ConnectionStatus from './components/ConnectionStatus';
+import OrderCard from './components/OrderCard';
+import OrderDetailsModal from './components/OrderDetailsModal';
+import Logs from './components/Logs';
+import './index.css';
+
+// WebSocket URL - update this to match your backend
+const WS_URL = 'ws://localhost:8080/ws';
 
 function App() {
-  const [messages, setMessages] = useState([]);
-  const [status, setStatus] = useState('DISCONNECTED');
+    const { isConnected, messages, logs, clearLogs } = useWebSocket(WS_URL);
+    const [activeTab, setActiveTab] = useState('onc');
+    const [selectedOrder, setSelectedOrder] = useState(null);
 
-  // No socket cleanup on unmount for this simple demo to keep connection alive if possible
-  useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8888');
-    setStatus('CONNECTING...');
+    // Separate orders by process type
+    const { oncOrders, omsOrders } = useMemo(() => {
+        const onc = [];
+        const oms = [];
 
-    ws.onopen = () => {
-      setStatus('LIVE STREAM');
-      setMessages([]);
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.status === 'COMPLETE') {
-        setStatus('ANALYSIS COMPLETE');
-      } else {
-        setMessages(prev => [...prev, data]);
-      }
-    };
-
-    ws.onclose = () => {
-      setStatus('DISCONNECTED');
-    };
-
-    return () => ws.close();
-  }, []);
-
-  const stats = useMemo(() => {
-    const total = messages.length;
-    const mismatch = messages.filter(m => m.status === 'MISMATCH').length;
-    const missing = messages.filter(m => m.status.includes('MISSING')).length;
-    return { total, mismatch, missing };
-  }, [messages]);
-
-  // SMART ANALYSIS: Find the most frequent breaking tags
-  const topOffenders = useMemo(() => {
-    const counts = {};
-    messages.forEach(msg => {
-      if (msg.tagMismatches) {
-        Object.keys(msg.tagMismatches).forEach(tag => {
-          counts[tag] = (counts[tag] || 0) + 1;
+        messages.forEach(message => {
+            if (message.processType === 'onc') {
+                onc.push(message);
+            } else if (message.processType === 'oms') {
+                oms.push(message);
+            }
         });
-      }
-    });
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4); // Top 4
-  }, [messages]);
 
-  const errorMessages = useMemo(() => {
-    return messages.filter(msg => msg.status !== 'MATCH');
-  }, [messages]);
+        return { oncOrders: onc, omsOrders: oms };
+    }, [messages]);
 
-  return (
-    <div className="container">
-      <header className="dashboard-header">
-        <h1>Log Replay <span>Audit</span></h1>
-        <div className="status-indicator">{status}</div>
-      </header>
+    const currentOrders = activeTab === 'onc' ? oncOrders : omsOrders;
 
-      {/* NEW: Analytical Insights Panel */}
-      <div className="insights-panel">
-        {/* KPI Cards */}
-        <div className="kpi-group">
-          <div className="kpi-card error">
-            <div className="kpi-val">{stats.mismatch}</div>
-            <div className="kpi-lbl">Mismatches</div>
-          </div>
-          <div className="kpi-card warning">
-            <div className="kpi-val">{stats.missing}</div>
-            <div className="kpi-lbl">Missing</div>
-          </div>
-          <div className="kpi-card neutral">
-            <div className="kpi-val">{stats.total}</div>
-            <div className="kpi-lbl">Scanned</div>
-          </div>
-        </div>
-
-        {/* Top Offenders List */}
-        <div className="offenders-group">
-          <h3>Top Breaking Tags</h3>
-          {topOffenders.length === 0 ? (
-            <div className="no-data">No mismatches yet</div>
-          ) : (
-            <div className="offenders-list">
-              {topOffenders.map(([tag, count]) => (
-                <div key={tag} className="offender-item">
-                  <span className="of-tag">Tag {tag}</span>
-                  <div className="of-bar-container">
-                    <div className="of-bar" style={{ width: `${(count / stats.mismatch) * 100}%` }}></div>
-                  </div>
-                  <span className="of-count">{count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Main Issues List */}
-      <div className="results-list">
-        {errorMessages.length === 0 && stats.total > 0 && (
-          <div className="empty-state">No mismatches found. Perfect Match!</div>
-        )}
-
-        {errorMessages.map((item, index) => (
-          <div key={index} className={`result-card-focused ${item.status}`}>
-
-            <div className="card-context">
-              <span className="context-label">ORDER ID</span>
-              <span className="context-id">{item.orderId}</span>
-              <span className={`mini-badge ${item.status}`}>{item.status}</span>
-            </div>
-
-            <div className="card-problems">
-              {item.status.includes("MISSING") ? (
-                <div className="missing-text">
-                  Message missing in {item.status.includes("ORIGINAL") ? "Original" : "Replay"}
-                </div>
-              ) : (
-                <div className="tag-row">
-                  {Object.entries(item.tagMismatches).map(([tag, values]) => (
-                    <div key={tag} className="tag-item">
-                      <span className="t-name">Tag {tag}</span>
-                      <span className="t-val">{values[1]}</span>
+    return (
+        <div className="app">
+            <header className="header">
+                <div className="header-content">
+                    <div className="header-title">
+                        <span className="icon">📊</span>
+                        <h1>Log Replay Monitor</h1>
                     </div>
-                  ))}
+                    <ConnectionStatus isConnected={isConnected} />
                 </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
+            </header>
+
+            <main className="container">
+                <div className="tabs">
+                    <button
+                        className={`tab ${activeTab === 'onc' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('onc')}
+                    >
+                        ONC Engine
+                        {oncOrders.length > 0 && (
+                            <span className="tab-badge">{oncOrders.length}</span>
+                        )}
+                    </button>
+                    <button
+                        className={`tab ${activeTab === 'oms' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('oms')}
+                    >
+                        OMS Engine
+                        {omsOrders.length > 0 && (
+                            <span className="tab-badge">{omsOrders.length}</span>
+                        )}
+                    </button>
+                </div>
+
+                {currentOrders.length === 0 ? (
+                    <div className="empty-state">
+                        <div className="empty-state-icon">📭</div>
+                        <div className="empty-state-title">No Orders Yet</div>
+                        <div className="empty-state-description">
+                            {isConnected
+                                ? `Waiting for ${activeTab.toUpperCase()} orders...`
+                                : 'Connect to the server to see orders'}
+                        </div>
+                    </div>
+                ) : (
+                    <div className="orders-grid">
+                        {currentOrders.map((order, index) => (
+                            <OrderCard
+                                key={`${order.orderId}-${index}`}
+                                order={order}
+                                onClick={setSelectedOrder}
+                            />
+                        ))}
+                    </div>
+                )}
+
+                <Logs logs={logs} onClear={clearLogs} />
+            </main>
+
+            {selectedOrder && (
+                <OrderDetailsModal
+                    order={selectedOrder}
+                    onClose={() => setSelectedOrder(null)}
+                />
+            )}
+        </div>
+    );
 }
 
-export default App
+export default App;
