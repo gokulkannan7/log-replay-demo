@@ -30,29 +30,35 @@ const useWebSocket = (url) => {
                 try {
                     const data = JSON.parse(event.data);
 
-                    // Only process orders with non-empty tagMismatches
-                    if (!data.tagMismatches || Object.keys(data.tagMismatches).length === 0) {
-                        addLog(`Skipping order ${data.orderId} - no mismatches`, 'info');
+                    // --- STACK TRACE PROTECTION & STRICT VALIDATION ---
+                    // Explicitly reject if:
+                    // 1. Data is null/empty
+                    // 2. data.orderId is missing, "undefined", or null
+                    // 3. data.tagMismatches is missing or empty
+                    const orderId = data?.orderId;
+                    const tagMismatches = data?.tagMismatches || {};
+                    const mismatchCount = Object.keys(tagMismatches).length;
+
+                    if (!orderId || orderId === 'undefined' || mismatchCount === 0) {
+                        // Log locally to console for debugging, but don't show in UI to keep it clean
+                        console.warn('REJECTED: Received invalid or empty order payload:', data);
                         return;
                     }
 
-                    addLog(`Received message for order: ${data.orderId} (${Object.keys(data.tagMismatches).length} mismatches)`, 'info');
+                    addLog(`[VALIDATED] Received Order: ${orderId} | Mismatches: ${mismatchCount}`, 'info');
 
-                    // Deduplicate by orderId - replace existing order if it exists
                     setMessages(prev => {
-                        const existingIndex = prev.findIndex(msg => msg.orderId === data.orderId);
+                        const existingIndex = prev.findIndex(msg => msg.orderId === orderId);
                         if (existingIndex !== -1) {
-                            // Replace existing order
                             const updated = [...prev];
                             updated[existingIndex] = data;
                             return updated;
                         } else {
-                            // Add new order
                             return [...prev, data];
                         }
                     });
                 } catch (error) {
-                    addLog(`Error parsing message: ${error.message}`, 'error');
+                    addLog(`WS JSON Error: ${error.message}`, 'error');
                 }
             };
 
