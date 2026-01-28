@@ -6,8 +6,8 @@ import OrderDetailsModal from './components/OrderDetailsModal';
 import Logs from './components/Logs';
 import './index.css';
 
-// WebSocket URL - update this to match your backend
-const WS_URL = 'ws://localhost:8080/ws';
+// WebSocket URL - matches backend port 8888
+const WS_URL = 'ws://localhost:8888';
 
 function App() {
     const { isConnected, messages, logs, clearLogs } = useWebSocket(WS_URL);

@@ -29,8 +29,28 @@ const useWebSocket = (url) => {
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    addLog(`Received message for order: ${data.orderId}`, 'info');
-                    setMessages(prev => [...prev, data]);
+
+                    // Only process orders with non-empty tagMismatches
+                    if (!data.tagMismatches || Object.keys(data.tagMismatches).length === 0) {
+                        addLog(`Skipping order ${data.orderId} - no mismatches`, 'info');
+                        return;
+                    }
+
+                    addLog(`Received message for order: ${data.orderId} (${Object.keys(data.tagMismatches).length} mismatches)`, 'info');
+
+                    // Deduplicate by orderId - replace existing order if it exists
+                    setMessages(prev => {
+                        const existingIndex = prev.findIndex(msg => msg.orderId === data.orderId);
+                        if (existingIndex !== -1) {
+                            // Replace existing order
+                            const updated = [...prev];
+                            updated[existingIndex] = data;
+                            return updated;
+                        } else {
+                            // Add new order
+                            return [...prev, data];
+                        }
+                    });
                 } catch (error) {
                     addLog(`Error parsing message: ${error.message}`, 'error');
                 }
@@ -43,7 +63,8 @@ const useWebSocket = (url) => {
 
             ws.onclose = () => {
                 setIsConnected(false);
-                addLog('WebSocket connection closed', 'error');
+                setMessages([]); // Clear all orders on disconnect
+                addLog('WebSocket connection closed - UI cleared', 'error');
 
                 // Attempt to reconnect with exponential backoff
                 const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
